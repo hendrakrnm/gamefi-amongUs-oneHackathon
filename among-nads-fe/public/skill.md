@@ -181,31 +181,67 @@ socket.on("game_state_update", async (state) => {
     }
   }
 
-  // ── STEP 2: Claim payout after game settles ──
-  if (state.phase === "ENDED" && hasBet && betGameId && state.winner) {
-    const weWon =
-      (BET_TEAM === 0 && state.winner.includes("Crewmates")) ||
-      (BET_TEAM === 1 && state.winner.includes("Impostors"));
+  // ── STEP 2: Check result on-chain and claim payout ──
+  // After betting, poll getGame() to check if the game has settled.
+  // This is more reliable than depending on the socket state.
+  if (state.phase === "ENDED" && hasBet && betGameId) {
+    try {
+      const game = await publicClient.readContract({
+        address: AMONG_NADS,
+        abi: [{ name: "getGame", type: "function", stateMutability: "view",
+          inputs: [{ name: "gameId", type: "uint256" }],
+          outputs: [{ name: "", type: "tuple",
+            components: [
+              { name: "id", type: "uint256" },
+              { name: "state", type: "uint8" },       // 3 = Settled, 4 = Cancelled
+              { name: "bettingDeadline", type: "uint256" },
+              { name: "totalPool", type: "uint256" },
+              { name: "crewmatesPool", type: "uint256" },
+              { name: "impostorsPool", type: "uint256" },
+              { name: "crewmatesSeed", type: "uint256" },
+              { name: "impostorsSeed", type: "uint256" },
+              { name: "winningTeam", type: "uint8" },  // 0 = Crewmates, 1 = Impostors
+            ],
+          }],
+        }],
+        functionName: "getGame",
+        args: [BigInt(betGameId)],
+      });
 
-    if (weWon) {
-      console.log(`We won! Claiming payout for game ${betGameId}...`);
-      try {
+      if (game.state === 3) {
+        // Game settled — check if we won
+        const weWon = Number(game.winningTeam) === BET_TEAM;
+        if (weWon) {
+          console.log(`We won game ${betGameId}! Claiming payout...`);
+          const hash = await walletClient.writeContract({
+            address: AMONG_NADS, abi, functionName: "claimPayout",
+            args: [BigInt(betGameId)],
+          });
+          await publicClient.waitForTransactionReceipt({ hash });
+          console.log(`Payout claimed! tx: ${hash}`);
+        } else {
+          console.log(`We lost game ${betGameId}. Better luck next round!`);
+        }
+        hasBet = false;
+        betGameId = null;
+      } else if (game.state === 4) {
+        // Game cancelled — claim refund
+        console.log(`Game ${betGameId} was cancelled. Claiming refund...`);
         const hash = await walletClient.writeContract({
-          address: AMONG_NADS, abi, functionName: "claimPayout",
+          address: AMONG_NADS,
+          abi: [{ name: "claimRefund", type: "function", stateMutability: "nonpayable",
+            inputs: [{ name: "gameId", type: "uint256" }], outputs: [] }],
+          functionName: "claimRefund",
           args: [BigInt(betGameId)],
         });
         await publicClient.waitForTransactionReceipt({ hash });
-        console.log(`Payout claimed! tx: ${hash}`);
-      } catch (err) {
-        console.error("Claim failed:", err.message);
+        console.log(`Refund claimed! tx: ${hash}`);
+        hasBet = false;
+        betGameId = null;
       }
-    } else {
-      console.log(`We lost game ${betGameId}. Better luck next round!`);
+    } catch (err) {
+      console.error("Check/claim failed:", err.message);
     }
-
-    // Reset for next round
-    hasBet = false;
-    betGameId = null;
   }
 });
 
@@ -217,7 +253,8 @@ console.log("Connected to Among Nads. Waiting for LOBBY...");
 - `state.timer > 60` — bet early, never in the last 60 seconds
 - `state.bettingOpen === true` — only bet during LOBBY phase
 - Only bets once per round (`hasBet` flag)
-- Claims automatically when game ends and your team won
+- Reads `getGame()` on-chain to check winner (not dependent on socket)
+- Handles cancelled games with automatic `claimRefund()`
 
 ### Alternative: Betting with Cast (Foundry)
 
