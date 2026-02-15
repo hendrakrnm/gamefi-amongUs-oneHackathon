@@ -275,8 +275,11 @@ export class MoltbookService extends EventEmitter {
             if (agent.posts.length > 10) agent.posts.shift();
           }
 
-          // Note: We might want to re-queue them if they are not currently in a game
-          // But for now, let's just track them.
+          // Re-queue known agents if they're not already in the spawn queue
+          const alreadyQueued = this.spawnQueue.some((a) => a.name === agentName);
+          if (!alreadyQueued) {
+            this.spawnQueue.push(agent);
+          }
         }
       }
 
