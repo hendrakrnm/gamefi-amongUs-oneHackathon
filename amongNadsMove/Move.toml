@@ -1,0 +1,19 @@
+[package]
+name = "amongNadsMove"
+edition = "2024.beta"
+
+[dependencies.MoveStdlib]
+override = true
+git = "https://github.com/one-chain-labs/onechain.git"
+subdir = "crates/sui-framework/packages/move-stdlib"
+rev = "613eda102ec09662c8d7f5c56f0e47b7453e2822"
+
+[dependencies.One]
+git = "https://github.com/one-chain-labs/onechain.git"
+subdir = "crates/sui-framework/packages/one-framework"
+rev = "613eda102ec09662c8d7f5c56f0e47b7453e2822"
+
+[addresses]
+among_nads = "0x0"
+std = "0x1"
+sui = "0x2"
